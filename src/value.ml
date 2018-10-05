@@ -518,6 +518,14 @@ let value_string_append = function
   | [v1; v2] -> V_string (Sail_lib.string_append (coerce_string v1, coerce_string v2))
   | _ -> failwith "value string_append"
 
+let value_parse_bits = function
+  | [v] ->
+     begin match Sail_lib.parse_bits (coerce_string v) with
+     | ZSome bits -> V_ctor ("Some", [mk_vector bits])
+     | ZNone () -> V_ctor ("None", [V_unit])
+     end
+  | _ -> failwith "value parse_bits"
+
 let primops =
   List.fold_left
     (fun r (x, y) -> StringMap.add x y r)
@@ -620,4 +628,5 @@ let primops =
       ("string_length", value_string_length);
       ("string_startswith", value_string_startswith);
       ("string_drop", value_string_drop);
+      ("parse_bits", value_parse_bits);
     ]

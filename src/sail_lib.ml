@@ -1092,6 +1092,16 @@ let hex_bits_64_matches_prefix s =
      else
        ZNone ()
 
+let string_to_list s =
+  let rec aux i acc =
+    if i < 0 then acc
+    else aux (i-1) (s.[i] :: acc)
+  in aux (String.length s - 1) []
+
+let parse_bits s =
+  match string_to_list s with
+  | '0' :: 'x' :: hex -> ZSome (List.concat (List.map hex_char hex))
+  | _ -> ZNone ()
 
 let string_of_bool = function
   | true -> "true"

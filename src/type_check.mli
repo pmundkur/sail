@@ -67,6 +67,10 @@ val opt_no_effects : bool ref
    assignments in l-expressions. *)
 val opt_no_lexp_bounds_check : bool ref
 
+(** [opt_view_patterns] enables Haskell style view patterns in the
+   bind_pat function. *)
+val opt_view_patterns : bool ref
+
 (** {2 Type errors} *)
 
 type type_error =

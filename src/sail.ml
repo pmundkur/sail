@@ -165,6 +165,9 @@ let options = Arg.align ([
   ( "-latex_prefix",
     Arg.String (fun prefix -> Latex.opt_prefix_latex := prefix),
     " set a custom prefix for generated latex command (default sail)");
+  ( "-view_patterns",
+    Arg.Set Type_check.opt_view_patterns,
+    " enable view patterns");
   ( "-mono_split",
     Arg.String (fun s ->
       let l = Util.split_on_char ':' s in

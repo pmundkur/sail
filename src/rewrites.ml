@@ -4942,6 +4942,7 @@ let rewrite_defs_coq = [
 let rewrite_defs_ocaml = [
     (* ("undefined", rewrite_undefined); *)
   ("no_effect_check", (fun defs -> opt_no_effects := true; defs));
+  ("view_patterns", View_rewrite.rewrite_view_patterns);
   ("realise_mappings", rewrite_defs_realise_mappings);
   ("toplevel_string_append", rewrite_defs_toplevel_string_append);
   ("pat_string_append", rewrite_defs_pat_string_append);
@@ -4990,6 +4991,7 @@ let rewrite_defs_c = [
 
 let rewrite_defs_interpreter = [
     ("no_effect_check", (fun defs -> opt_no_effects := true; defs));
+    ("view_patterns", View_rewrite.rewrite_view_patterns);
     ("realise_mappings", rewrite_defs_realise_mappings);
     ("toplevel_string_append", rewrite_defs_toplevel_string_append);
     ("pat_string_append", rewrite_defs_pat_string_append);

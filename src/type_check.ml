@@ -69,6 +69,10 @@ let opt_no_effects = ref false
    assignments in l-expressions *)
 let opt_no_lexp_bounds_check = ref false
 
+(* opt_view_patterns enables Haskell style view patterns in the
+   bind_pat function. *)
+let opt_view_patterns = ref false
+
 let depth = ref 0
 
 let rec indent n = match n with
@@ -2760,7 +2764,6 @@ and bind_pat env (P_aux (pat_aux, (l, ())) as pat) (Typ_aux (typ_aux, _) as typ)
           end
        | _ -> typ_error l ("Mal-formed constructor " ^ string_of_id f ^ " with type " ^ string_of_typ ctor_typ)
      end
-
   | P_app (f, pats) when Env.is_mapping f env ->
      begin
        let (typq, mapping_typ) = Env.get_val_spec f env in
@@ -2814,7 +2817,54 @@ and bind_pat env (P_aux (pat_aux, (l, ())) as pat) (Typ_aux (typ_aux, _) as typ)
           end
        | _ -> typ_error l ("Mal-formed mapping " ^ string_of_id f)
      end
-
+  (* Treat functions in patterns as views, as in the GHC Haskell
+     extension of the same name. We allow such views to be overloaded
+     exactly as regular functions. *)
+  | P_app (f, [pat]) when !opt_view_patterns && List.length (Env.get_overloads f env) > 0 ->
+     let rec try_overload = function
+       | (errs, []) -> typ_raise l (Err_no_overloading (f, errs))
+       | (errs, (f :: fs)) -> begin
+           typ_print (lazy (Printf.sprintf "Overload view: %s(%s)" (string_of_id f) (string_of_pat pat)));
+           try bind_pat env (P_aux (P_app (f, [pat]), (l, ()))) typ with
+           | Type_error (_, err) -> try_overload (errs @ [(f, err)], fs)
+         end
+     in
+     try_overload ([], Env.get_overloads f env)
+  | P_app (f, [pat]) when !opt_view_patterns ->
+     begin
+       let (typq, view_typ) = Env.get_val_spec f env in
+       match Env.expand_synonyms env view_typ with
+       | Typ_aux (Typ_fn (arg_typ, ret_typ, _), _) ->
+          let unifiers, _, _ =
+            try unify l env arg_typ typ with Unification_error (l, m) -> typ_error l m
+          in
+          let quants =
+            List.fold_left (fun qs (kid, uvar) -> instantiate_quants qs kid uvar) (quant_items typq) (KBindings.bindings unifiers)
+          in
+          if not (List.for_all (solve_quant env) quants) then
+            (* If we can't solve all the quantifiers by unifying with
+               the argument type, try using infer_pat and unifying the
+               return type *)
+            begin
+              let inferred_pat, env, guards = infer_pat env pat in
+              let unifiers, _, _ =
+                try unify l env ret_typ (pat_typ_of inferred_pat) with Unification_error (l, m) -> typ_error l m
+              in
+              let quants =
+                List.fold_left (fun qs (kid, uvar) -> instantiate_quants qs kid uvar) (quant_items typq) (KBindings.bindings unifiers)
+              in
+              if not (List.for_all (solve_quant env) quants) then
+                typ_error l (Printf.sprintf "Could not solve all quantifiers in view pattern %s" (string_of_id f))
+              else
+                annot_pat (P_app (f, [inferred_pat])) typ, env, guards
+            end
+          else
+            let ret_typ' = subst_unifiers unifiers ret_typ in
+            let typed_pat, env, guards = bind_pat env pat ret_typ in
+            annot_pat (P_app (f, [typed_pat])) typ, env, guards
+       | _ -> typ_error l "View pattern applied to more than a single argument"
+     end
+  (* If we have -view_patterns this rule is unreachable. *)
   | P_app (f, _) when (not (Env.is_union_constructor f env) && not (Env.is_mapping f env)) ->
      typ_error l (string_of_id f ^ " is not a union constructor or mapping in pattern " ^ string_of_pat pat)
   | P_as (pat, id) ->
