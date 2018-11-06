@@ -1009,6 +1009,105 @@ would be in OCaml, for example: \lstinputlisting{examples/exn.sail}
 Note how the use of the scattered type allows additional exceptions to
 be declared even after they are used.
 
+\newpage
+\subsection{Module System}
+\label{sec:modules}
+
+\noindent \emph{Note: This feature is experimental and subject to change}
+
+We detail here a proposal for a Sail module system. Some form of
+modularity is desirable for ISA specifications, as there is often a
+need to separate out numerous extensions to a base ISA (as is common in
+RISC-V).
+
+Modules are introduced via the \ll{module} keyword. The general syntax
+for a module declaration is as follows:
+\begin{center}
+  \ll{module} \textit{module-name} \textit{type-variables}(, \textit{constraint})? (\{ \textit{id-list} \})? \ll{where}\\
+  def$_0$\\
+  $\vdots$\\
+  def$_n$\\
+  \ll{end} \textit{module-name}
+\end{center}
+The constraint and identifier list are both optional, and the list of
+type-variables can be empty.
+
+We'll introduce the basic features of Sail modules via a simple
+key-value map (similar to OCaml's Map module). We start with the
+module declaration:
+\begin{lstlisting}
+module Map ('k : Type) where
+\end{lstlisting}
+By convention the name of the module is capitalised, but as with most
+identifiers in Sail no particular lexical convention is enforced.
+
+Now the body of the module contains an ordinary list of Sail top-level
+definitions---everything is allowed. We start by defining the type of
+the map, \ll{t}, and the signature of the comparison function we'll
+use to compare keys.
+\begin{lstlisting}
+  newtype t ('a : Type) = Map : list(('k, 'a))
+
+  val compare : ('k, 'k) -> int
+\end{lstlisting}
+The module name exists in its own namespace, so the constructor for
+\ll{t} can also be called \ll{Map}. Next we'll define an insertion
+function, \ll{insert}, for our map using an auxilliary helper
+function, \ll{insert'}.
+\begin{lstlisting}
+  val insert' : forall ('a : Type). ('k, 'a, list(('k, 'a))) -> list(('k, 'a))
+
+  function insert'(k, v, m) =
+    match m {
+      (k', v') :: m' =>
+        if compare(k, k') < 0 then {
+	  (k, v) :: m
+	} else if compare(k, k') == 0 then {
+	  (k', v') :: m'
+        } else {
+	  (k', v') :: insert'(k, v, m')
+        },
+      [||] => [|(k, v)|]
+    }
+
+  val insert : forall ('a : Type). ('k, 'a, t('a)) -> t('a)
+
+  function insert(k, v, Map(m)) = Map(insert'(k, v, m))
+\end{lstlisting}
+We could define more functions for our Map, but for now we just end
+the module declaration
+\begin{lstlisting}
+end Map
+\end{lstlisting}
+
+\subsubsection{Importing modules}
+
+Now we have a module defined, we want to be able to import its
+contents into some other scope. For that we use the \ll{import}
+statement. The structure of an import statement is as follows:
+\begin{center}
+  \ll{import} \textit{module-name}(\textit{type-arguments})
+  (\{ \textit{bindings} \})?
+  \ll{as} \textit{name}
+\end{center}
+We could therefore import our Map module specialised for integers as
+\begin{lstlisting}
+import Map(int) { compare = int_compare } as IntMap
+\end{lstlisting}
+The result of this import statement is that the following definitions come into scope:
+\begin{enumerate}
+\item
+  The type \ll{IntMap.t},
+\item
+  its type constructor \ll{IntMap.Map : list((int, 'a)) -> IntMap.t('a)},
+\item
+  The function \ll{IntMap.compare : (int, int) -> int},
+\item
+  Function \ll{IntMap.insert' : forall ('a : Type). (int, 'a, list(('k, 'a))) -> list(('k, 'a))},
+\item
+  and \ll{IntMap.insert : forall ('a : Type). (int, 'a, IntMap.t('a)) -> IntMap.t('a)}
+\end{enumerate}
+
 \subsection{Preludes and Default Environment}
 \label{sec:prelude}
 

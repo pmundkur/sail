@@ -153,12 +153,17 @@ end
 
 module Id = struct
   type t = id
-  let compare id1 id2 =
+  let rec compare id1 id2 =
+    let lex_ord (c1, c2) = if c1 = 0 then c2 else c1 in
     match (id1, id2) with
     | Id_aux (Id x, _), Id_aux (Id y, _) -> String.compare x y
     | Id_aux (DeIid x, _), Id_aux (DeIid y, _) -> String.compare x y
+    | Id_aux (Scope (ns1, x), _), Id_aux (Scope (ns2, y), _) ->
+       lex_ord (String.compare ns1 ns2, compare x y)
+    | Id_aux (Scope _, _), _ -> -1
     | Id_aux (Id _, _), Id_aux (DeIid _, _) -> -1
     | Id_aux (DeIid _, _), Id_aux (Id _, _) -> 1
+    | _, Id_aux (Scope _, _) -> 1
 end
 
 module Nexp = struct
@@ -574,9 +579,12 @@ let def_loc = function
   | DEF_constraint (Id_aux (_, l), _, _) -> l
   | DEF_internal_mutrec _ -> Parse_ast.Unknown
 
-let string_of_id = function
+let scope name id = Id_aux (Scope (name, id), id_loc id)
+                           
+let rec string_of_id = function
   | Id_aux (Id v, _) -> v
   | Id_aux (DeIid v, _) -> "(operator " ^ v ^ ")"
+  | Id_aux (Scope (ns, id), _) -> ns ^ "::" ^ string_of_id id
 
 let id_of_kid = function
   | Kid_aux (Var v, l) -> Id_aux (Id (String.sub v 1 (String.length v - 1)), l)
@@ -1255,7 +1263,7 @@ let append_ast (Defs ast1) (Defs ast2) = Defs (ast1 @ ast2)
 let concat_ast asts = List.fold_right append_ast asts (Defs [])
 
 let type_union_id (Tu_aux (Tu_ty_id (_, id), _)) = id
-
+    
 let rec subst id value (E_aux (e_aux, annot) as exp) =
   let wrap e_aux = E_aux (e_aux, annot) in
   let e_aux = match e_aux with

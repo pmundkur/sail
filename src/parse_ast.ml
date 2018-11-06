@@ -104,11 +104,15 @@ type
 kid_aux =  (* identifiers with kind, ticked to differntiate from program variables *)
    Var of x
 
-
 type 
+id = 
+  Id_aux of id_aux * l
+          
+and
 id_aux =  (* Identifier *)
    Id of x
  | DeIid of x (* remove infix status *)
+ | Scope of x * id
 
 
 type 
@@ -124,12 +128,6 @@ base_effect =
 type 
 kid = 
    Kid_aux of kid_aux * l
-
-
-type 
-id = 
-   Id_aux of id_aux * l
-
 
 type 
 kind = 
@@ -553,6 +551,13 @@ type prec = Infix | InfixL | InfixR
 
 type fixity_token = (prec * Big_int.num * string)
 
+type import_spec_aux =  (* import declarations *)
+ | Imp_mod of atyp * (id * id) list * x
+ | Imp_file of string * (id * id) list * x
+                  
+type import_spec = 
+ | Imp_aux of import_spec_aux * l
+               
 type
 def =  (* Top-level definition *)
    DEF_kind of kind_def (* definition of named kind identifiers *)
@@ -566,6 +571,8 @@ def =  (* Top-level definition *)
  | DEF_default of default_typing_spec (* default kind and type assumptions *)
  | DEF_scattered of scattered_def (* scattered definition *)
  | DEF_reg_dec of dec_spec (* register declaration *)
+ | DEF_module of id * typquant * def list
+ | DEF_import of import_spec
  | DEF_pragma of string * string * l
  | DEF_constraint of id * kid list * n_constraint
  | DEF_internal_mutrec of fundef list

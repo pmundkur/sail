@@ -64,6 +64,7 @@ let opt_print_ocaml = ref false
 let opt_print_c = ref false
 let opt_print_latex = ref false
 let opt_print_coq = ref false
+let opt_module = ref false
 let opt_memo_z3 = ref false
 let opt_sanity = ref false
 let opt_includes_c = ref ([]:string list)
@@ -90,6 +91,9 @@ let options = Arg.align ([
   ( "-no_warn",
     Arg.Clear Util.opt_warnings,
     " do not print warnings");
+  ( "-module",
+    Arg.Set opt_module,
+    " (experimental) build a module");
   ( "-ocaml",
     Arg.Tuple [Arg.Set opt_print_ocaml; Arg.Set Initial_check.opt_undefined_gen],
     " output an OCaml translated version of the input");
@@ -328,6 +332,13 @@ let main() =
        else ());
       (if !(opt_print_verbose)
        then ((Pretty_print_sail.pp_defs stdout) ast)
+       else ());
+      (if !(opt_module)
+       then
+         let out = match !opt_file_out with None -> "out.mod" | Some s -> s ^ ".mod" in
+         let chan = open_out out in
+         Marshal.to_channel chan type_envs [Marshal.Closures];
+         close_out chan
        else ());
       (if !(opt_print_ocaml)
        then

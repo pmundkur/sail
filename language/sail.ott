@@ -127,8 +127,9 @@ annot :: '' ::=
 id :: '' ::=
   {{ com Identifier }}
   {{ aux _ l }}
-  | x                           :: :: id
-  | ( deinfix x )                       :: D :: deIid {{ com remove infix status }}
+  | x                            :: :: id
+  | ( deinfix x )                :: D :: deIid {{ com remove infix status }}
+  | x . id                       :: :: scope {{ com namespacing }} 
   | bool      		   	 :: M :: bool {{ com built in type identifiers }} {{ ichlo (Id "bool") }}
   | bit				 :: M :: bit {{ ichlo (Id "bit") }}
   | unit			 :: M :: unit {{ ichlo (Id "unit") }}
@@ -1001,12 +1002,20 @@ dec_spec :: 'DEC_' ::=
   | register alias id = alias_spec				:: :: alias
   | register alias typ id = alias_spec				:: :: typ_alias
 
+import_spec :: 'Imp_' ::=
+  {{ com import declarations }}
+  {{ aux _ annot }} {{ auxparam 'a }}
+  | import id ( typ_arg1 , ... , typ_argn )
+      { id1 = id1' , ... , idm = idm' } as x :: :: mod
+  | import string
+      { id1 = id1' , ... , idn = idn' } as x :: :: file 
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Top-level definitions                                        %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 prec :: '' ::=
-   | infix :: :: Infix
+   | infix  :: :: Infix
    | infixl :: :: InfixL
    | infixr :: :: InfixR
 
@@ -1036,6 +1045,10 @@ def :: 'DEF_' ::=
   | dec_spec                                           :: :: reg_dec
     {{ com register declaration }}
   | constraint id ( kid1 , ... , kidn ) = n_constraint :: :: constraint
+  | module id typquant where def1 ... defn             :: :: module
+    {{ com module declaration }}
+  | import_spec                                        :: :: import
+    {{ com module import }}
   | fundef1 .. fundefn                                 :: I :: internal_mutrec
     {{ com internal representation of mutually recursive functions }}
 

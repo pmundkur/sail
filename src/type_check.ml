@@ -316,6 +316,10 @@ module Env : sig
   val pattern_completeness_ctx : t -> Pattern_completeness.ctx
 
   val builtin_typs : typquant Bindings.t
+
+  val add_module : id -> typquant -> t -> t -> t
+  val quotient : t -> t -> t
+  val import : l -> (typ -> typ -> unit) -> id -> typ_arg list -> (id * id) list -> string -> t -> t
 end = struct
   type t =
     { top_val_specs : (typquant * typ) Bindings.t;
@@ -336,6 +340,7 @@ end = struct
       externs : (string -> string option) Bindings.t;
       smt_ops : string Bindings.t;
       constraint_synonyms : (kid list * n_constraint) Bindings.t;
+      modules : (typquant * t) Bindings.t;
       casts : id list;
       allow_casts : bool;
       allow_bindings : bool;
@@ -366,6 +371,7 @@ end = struct
       externs = Bindings.empty;
       smt_ops = Bindings.empty;
       constraint_synonyms = Bindings.empty;
+      modules = Bindings.empty;
       casts = [];
       allow_bindings = true;
       allow_casts = true;
@@ -508,6 +514,7 @@ end = struct
   let expand_typquant_synonyms env = quant_map_items (expand_quant_item_synonyms env)
 
   let rec expand_synonyms env (Typ_aux (typ, l) as t) =
+    (* typ_debug (lazy ("Expanding synonyms for " ^ string_of_typ t)); *)
     match typ with
     | Typ_internal_unknown -> Typ_aux (Typ_internal_unknown, l)
     | Typ_tup typs -> Typ_aux (Typ_tup (List.map (expand_synonyms env) typs), l)
@@ -915,6 +922,10 @@ end = struct
       { env with locals = Bindings.add id mtyp env.locals }
     end
 
+  let add_module id typq mdl env =
+    typ_print (lazy (adding ^ "module " ^ string_of_id id ^ " : " ^ string_of_typquant typq));
+    { env with modules = Bindings.add id (typq, mdl) env.modules }
+    
   let add_variant id variant env =
     begin
       typ_print (lazy (adding ^ "variant " ^ string_of_id id));
@@ -1069,9 +1080,7 @@ end = struct
     | Some ord -> ord
 
   let set_default_order o env =
-    match env.default_order with
-    | None -> { env with default_order = Some (Ord_aux (o, Parse_ast.Unknown)) }
-    | Some _ -> typ_error Parse_ast.Unknown ("Cannot change default order once already set")
+    { env with default_order = Some (Ord_aux (o, Parse_ast.Unknown)) }
 
   let set_default_order_inc = set_default_order Ord_inc
   let set_default_order_dec = set_default_order Ord_dec
@@ -1106,6 +1115,179 @@ end = struct
       Pattern_completeness.enums = env.enums;
       Pattern_completeness.variants = Bindings.map (fun (_, tus) -> IdSet.of_list (List.map type_union_id tus)) env.variants
     }
+
+  let quotient env1 env2 =
+    let diff m1 m2 = Bindings.filter (fun k _ -> not (Bindings.mem k m1)) m2 in
+    { empty with
+      top_val_specs = diff env1.top_val_specs env2.top_val_specs;
+      defined_val_specs = IdSet.diff env2.defined_val_specs env1.defined_val_specs;
+      locals = diff env1.locals env2.locals;
+      union_ids = diff env1.union_ids env2.union_ids;
+      registers = diff env1.registers env2.registers;
+      variants = diff env1.variants env2.variants;
+      mappings = diff env1.mappings env2.mappings;
+      typ_synonyms = diff env1.typ_synonyms env2.typ_synonyms;
+      num_defs = diff env1.num_defs env2.num_defs;
+      overloads = diff env1.overloads env2.overloads;
+      flow = diff env1.flow env2.flow;
+      enums = diff env1.enums env2.enums;
+      records = diff env1.records env2.records;
+      accessors = diff env1.accessors env2.accessors;
+      externs = diff env1.externs env2.externs;
+      smt_ops = diff env1.smt_ops env2.smt_ops;
+      constraint_synonyms = diff env1.constraint_synonyms env2.constraint_synonyms;
+      modules = diff env1.modules env2.modules
+    }
+    
+  let import l subtyp module_id typ_args links as_name env =
+    (* Get the module we are trying to import from the environment. *)
+    let typq, mdl =
+      try Bindings.find module_id env.modules with
+      | Not_found -> typ_error l ("Cannot find module named " ^ string_of_id module_id)
+    in
+    let kopts, ncs = quant_split typq in
+
+    (* First, we try to solve any constraints associated with the
+       module in the environment we are importing into. *)
+    let subst_ncs (Typ_arg_aux (arg, _)) kopt ncs =
+      match arg with
+      | Typ_arg_nexp n when is_nat_kopt kopt -> List.map (nc_subst_nexp (kopt_kid kopt) (unaux_nexp n)) ncs
+      | _ -> ncs
+    in
+    let ncs = List.fold_left2 (fun cs arg kopt -> subst_ncs arg kopt cs) ncs typ_args kopts in
+    if List.for_all (env.prove env) ncs then
+      ()
+    else typ_error l "Could not prove constraints when importing module";
+
+    (* Figure out all the type ids that are defined by the module we are importing. *)
+    let idents x = Bindings.bindings x |> List.map fst in
+    let new_typs =
+      idents mdl.variants @ idents mdl.records @ idents mdl.enums @ idents mdl.typ_synonyms
+      |> IdSet.of_list
+    in
+    typ_print (lazy (Util.("Import types " |> magenta |> clear)
+                     ^ Util.string_of_list ", " string_of_id (IdSet.elements new_typs)));
+    
+    let subst_typ (Typ_arg_aux (arg, _)) kopt typ =
+      match arg with
+      | Typ_arg_nexp n when is_nat_kopt kopt -> typ_subst_nexp (kopt_kid kopt) (unaux_nexp n) typ
+      | Typ_arg_order o when is_order_kopt kopt -> typ_subst_order (kopt_kid kopt) (unaux_order o) typ
+      | Typ_arg_typ t when is_typ_kopt kopt -> typ_subst_typ (kopt_kid kopt) (unaux_typ t) typ
+      | _ -> typ_error l "Kind mismatch in import"
+    in
+    let subst_constraint (Typ_arg_aux (arg, _)) kopt nc =
+      match arg with
+      | Typ_arg_nexp n when is_nat_kopt kopt -> nc_subst_nexp (kopt_kid kopt) (unaux_nexp n) nc
+      | _ -> nc
+    in
+    let subst_qi (Typ_arg_aux (arg, _)) kopt (QI_aux (qi_aux, l)) =
+      match arg, qi_aux with
+      | Typ_arg_nexp n, QI_const nc when is_nat_kopt kopt ->
+         QI_aux (QI_const (nc_subst_nexp (kopt_kid kopt) (unaux_nexp n) nc), l)
+      | _, _ -> QI_aux (qi_aux, l)
+    in
+    let subst_typq arg kopt = function
+      | TypQ_aux (TypQ_tq quants, l) -> TypQ_aux (TypQ_tq (List.map (subst_qi arg kopt) quants), l)
+      | TypQ_aux (TypQ_no_forall, l) -> TypQ_aux (TypQ_no_forall, l)
+    in
+
+    (* When we import an identifier, we add the required namespace. *)
+    let port_id id = if as_name = "" then id else scope as_name id in
+
+    (* When importing a type, we need to rename any identifiers in
+       that type that were bound in the module we are importing using
+       fix_id. *)
+    let rec rename_typs (Typ_aux (typ_aux, annot)) =
+      let typ_aux = match typ_aux with
+        | Typ_internal_unknown | Typ_var _ -> typ_aux
+        | Typ_id id -> if IdSet.mem id new_typs then Typ_id (port_id id) else Typ_id id
+        | Typ_fn (arg_typs, ret_typ, effect) ->
+           Typ_fn (List.map rename_typs arg_typs, rename_typs ret_typ, effect)
+        | Typ_bidir (typ1, typ2) ->
+           Typ_bidir (rename_typs typ1, rename_typs typ2)
+        | Typ_tup typs ->
+           Typ_tup (List.map (rename_typs) typs)
+        | Typ_exist (kids, nc, typ) ->
+           Typ_exist (kids, nc, rename_typs typ)
+        | Typ_app (id, args) ->
+           if IdSet.mem id new_typs then
+             Typ_app (port_id id, List.map rename_typ_args args)
+           else
+             Typ_app (id, List.map rename_typ_args args)
+      in
+      Typ_aux (typ_aux, annot)
+    and rename_typ_args (Typ_arg_aux (typ_arg_aux, annot)) =
+      let typ_arg_aux = match typ_arg_aux with
+        | Typ_arg_nexp _ | Typ_arg_order _ -> typ_arg_aux
+        | Typ_arg_typ typ -> Typ_arg_typ (rename_typs typ)
+      in
+      Typ_arg_aux (typ_arg_aux, annot)
+    in
+
+    (* Importing a type involves renaming type identifiers as
+       required, then substituting the module parameters. *)
+    let port_typ typ = List.fold_left2 (fun typ arg kopt -> subst_typ arg kopt typ) (rename_typs typ) typ_args kopts in
+    let port_constraint nc = List.fold_left2 (fun nc arg kopt -> subst_constraint arg kopt nc) nc typ_args kopts in
+    let port_typq typq = List.fold_left2 (fun typq arg kopt -> subst_typq arg kopt typq) typq typ_args kopts in
+    let port_bind (typq, typ) = port_typq typq, port_typ typ in
+    let port_mapping (typq, typ1, typ2) = port_typq typq, port_typ typ1, port_typ typ2 in
+
+    let undefined_val_specs =
+      let val_spec_ids = Bindings.bindings mdl.top_val_specs |> List.map fst |> IdSet.of_list in
+      (* TODO: Should we really be putting union constructor ids in top_val_specs? *)
+      let union_ids = Bindings.bindings mdl.union_ids |> List.map fst |> IdSet.of_list in
+      ref (IdSet.diff (IdSet.diff val_spec_ids mdl.defined_val_specs) union_ids)
+    in
+    
+    (* Check all the links *)
+    let check_link (id, id') =
+      if IdSet.mem id !undefined_val_specs then
+        undefined_val_specs := IdSet.remove id !undefined_val_specs    
+      else
+        typ_error l ("Identifier " ^ string_of_id id ^ " has already been defined");
+      let typq', typ' = get_val_spec id' env in
+      let typq, typ = port_bind (Bindings.find id mdl.top_val_specs) in
+      typ_print (lazy (Printf.sprintf "%s %s : %s as %s : %s"
+                         Util.("Link" |> magenta |> clear)
+                         (string_of_id (port_id id)) (string_of_typ typ) (string_of_id id') (string_of_typ typ')));
+      (* TODO: for simplicity assume that these functions are unquantified *)
+      if not (List.length (quant_items typq) = 0 && List.length (quant_items typq') = 0) then
+        typ_error l "Unsupported quantifiers in import function bindings"
+      else ();
+      match typ, typ' with
+      | Typ_aux (Typ_fn (arg_typs, ret_typ, _), _), Typ_aux (Typ_fn (arg_typs', ret_typ', _), _) ->
+         List.iter2 subtyp arg_typs arg_typs';
+         subtyp ret_typ' ret_typ
+      (* If we have valspec types that are not functions something has gone wrong. *)
+      | _ -> unreachable l __POS__ "link valspecs are not functions"
+    in
+    List.iter check_link links;
+
+    (* TODO: Should probably have this check at some point
+    if not (IdSet.is_empty !undefined_val_specs) then
+      typ_error l (Printf.sprintf "The following identifiers were left unbound when importing %s: %s"
+                     (string_of_id module_id)
+                     (Util.string_of_list ", " string_of_id (IdSet.elements !undefined_val_specs)))
+    else ();
+     *)
+    
+    (* Now we have everything we need to bring the elements of the
+       module into scope, we iterate over everything in the module and
+       add it to the environment we are importing into. *)
+    env
+    |> Bindings.fold (fun id bind env -> add_val_spec (port_id id) (port_bind bind) env) mdl.top_val_specs
+    |> Bindings.fold (fun id (mut, typ) env -> add_local (port_id id) (mut, port_typ typ) env) mdl.locals
+    |> Bindings.fold (fun id bind env -> add_union_id (port_id id) (port_bind bind) env) mdl.union_ids
+    |> Bindings.fold (fun id (e1, e2, typ) env -> add_register (port_id id) e1 e2 (port_typ typ) env) mdl.registers
+    |> Bindings.fold (fun id variant env -> add_variant (port_id id) variant env) mdl.variants
+    |> Bindings.fold (fun id mapping env -> add_mapping (port_id id) (port_mapping mapping) env) mdl.mappings
+    |> Bindings.fold (fun id overloads env -> add_overloads (port_id id) (List.map port_id overloads) env) mdl.overloads
+    |> Bindings.fold (fun id synonym env -> add_typ_synonym (port_id id) (fun env' args -> port_typ (synonym env' args)) env) mdl.typ_synonyms
+    |> Bindings.fold (fun id nexp env -> add_num_def (port_id id) nexp env) mdl.num_defs
+    |> Bindings.fold (fun id (kids, nc) env -> add_constraint_synonym (port_id id) kids (port_constraint nc) env) mdl.constraint_synonyms
+    |> Bindings.fold (fun id (typq, mdl) env -> add_module (port_id id) (port_typq typq) mdl env) mdl.modules
+    |> Bindings.fold (fun id _ env -> define_val_spec (port_id id) env) mdl.top_val_specs
+    
 end
 
 let add_typquant l (quant : typquant) (env : Env.t) : Env.t =
@@ -2956,7 +3138,7 @@ and bind_assignment env (LEXP_aux (lexp_aux, _) as lexp) (E_aux (_, (l, ())) as 
      annot_assign tlexp inferred_exp, env'
 
 and bind_lexp env (LEXP_aux (lexp_aux, (l, ())) as lexp) typ =
-  typ_print (lazy ("Binding mutable " ^ string_of_lexp lexp ^  " to " ^ string_of_typ typ));
+  typ_print (lazy (Util.("Binding mutable " |> yellow |> clear) ^ string_of_lexp lexp ^  " to " ^ string_of_typ typ));
   let annot_lexp_effect lexp typ eff = LEXP_aux (lexp, (l, Some ((env, typ, eff),None))) in
   let annot_lexp lexp typ = annot_lexp_effect lexp typ no_effect in
   match lexp_aux with
@@ -4350,9 +4532,7 @@ let check_val_spec env (VS_aux (vs, (l, _))) =
 
 let check_default env (DT_aux (ds, l)) =
   match ds with
-  | DT_order (Ord_aux (Ord_inc, _)) -> [DEF_default (DT_aux (ds, l))], Env.set_default_order_inc env
-  | DT_order (Ord_aux (Ord_dec, _)) -> [DEF_default (DT_aux (ds, l))], Env.set_default_order_dec env
-  | DT_order (Ord_aux (Ord_var _, _)) -> typ_error l "Cannot have variable default order"
+  | DT_order (Ord_aux (ord, _)) -> [DEF_default (DT_aux (ds, l))], Env.set_default_order ord env
 
 let kinded_id_arg kind_id =
   let typ_arg arg = Typ_arg_aux (arg, Parse_ast.Unknown) in
@@ -4452,6 +4632,43 @@ let rec check_typedef : 'a. Env.t -> 'a type_def -> (tannot def) list * Env.t =
           typ_error l "Bad bitfield type"
      end
 
+and check_module : 'a. Env.t -> id -> typquant -> ('a def) list -> (tannot def) list * Env.t =
+  fun env id typq defs ->
+  typ_print (lazy ("Checking module " ^ string_of_id id));
+  let mdl_env = add_typquant (id_loc id) typq env in
+  let Defs defs, mdl_env = check mdl_env (Defs defs) in
+  let mdl = Env.quotient env mdl_env in
+  [DEF_module (id, typq, defs)], Env.add_module id typq mdl env
+
+and check_import : 'a. Env.t -> 'a import_spec -> (tannot def) list * Env.t =
+  fun env (Imp_aux (import_spec, (l, _))) ->
+  match import_spec with
+  | Imp_mod (id, args, links, as_name) ->
+     begin
+       typ_print (lazy (Util.("Importing " |> magenta |> clear) ^ string_of_id id));
+       incr depth;
+       try
+         let env = Env.import l (subtyp l env) id args links as_name env in
+         decr depth;
+         [DEF_import (Imp_aux (Imp_mod (id, args, links, as_name), (l, None)))], env
+       with
+       | Type_error (l, err) -> decr depth; typ_raise l err
+     end
+  | Imp_file (file, links, as_name) ->
+     begin
+       typ_print (lazy (Util.("Importing file " |> magenta |> clear) ^ file));
+       let chan = open_in file in
+       let mdl : Env.t = Marshal.from_channel chan in
+       incr depth;
+       try
+         let env = Env.add_module (mk_id file) (mk_typquant []) mdl env in
+         let env = Env.import l (subtyp l env) (mk_id file) [] links as_name env in
+         decr depth;
+         [DEF_import (Imp_aux (Imp_file (file, links, as_name), (l, None)))], env
+       with
+       | Type_error (l, err) -> decr depth; typ_raise l err
+     end
+         
 and check_def : 'a. Env.t -> 'a def -> (tannot def) list * Env.t =
   fun env def ->
   let cd_err () = raise (Reporting.err_unreachable Parse_ast.Unknown __POS__ "Unimplemented Case") in
@@ -4476,6 +4693,9 @@ and check_def : 'a. Env.t -> 'a def -> (tannot def) list * Env.t =
   | DEF_spec vs -> check_val_spec env vs
   | DEF_default default -> check_default env default
   | DEF_overload (id, ids) -> [DEF_overload (id, ids)], Env.add_overloads id ids env
+  | DEF_module (id, typq, defs) ->
+     check_module env id typq defs
+  | DEF_import imp -> check_import env imp
   | DEF_reg_dec (DEC_aux (DEC_reg (typ, id), (l, _))) ->
      let env = Env.add_register id (mk_effect [BE_rreg]) (mk_effect [BE_wreg]) typ env in
      [DEF_reg_dec (DEC_aux (DEC_reg (typ, id), (l, Some ((env, typ, no_effect), Some typ))))], env

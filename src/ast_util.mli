@@ -66,6 +66,8 @@ val lvar_typ : 'a lvar -> 'a
 val no_annot : unit annot
 val gen_loc : Parse_ast.l -> Parse_ast.l
 
+val scope : string -> id -> id
+
 val mk_id : string -> id
 val mk_kid : string -> kid
 val mk_ord : order_aux -> order

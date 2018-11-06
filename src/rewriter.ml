@@ -351,12 +351,14 @@ let rewrite_fun rewriters (FD_aux (FD_function(recopt,tannotopt,effectopt,funcls
     (FCL_aux (FCL_Funcl (id, rewrite_pexp rewriters pexp),(l,annot)))
   in FD_aux (FD_function(recopt,tannotopt,effectopt,List.map rewrite_funcl funcls),(l,fdannot))
 
-let rewrite_def rewriters d = match d with
+let rec rewrite_def rewriters d = match d with
   | DEF_reg_dec (DEC_aux (DEC_config (id, typ, exp), annot)) ->
      DEF_reg_dec (DEC_aux (DEC_config (id, typ, rewriters.rewrite_exp rewriters exp), annot))
   | DEF_type _ | DEF_mapdef _ | DEF_kind _ | DEF_spec _ | DEF_default _ | DEF_reg_dec _ | DEF_overload _ | DEF_fixity _ -> d
   | DEF_fundef fdef -> DEF_fundef (rewriters.rewrite_fun rewriters fdef)
   | DEF_internal_mutrec fdefs -> DEF_internal_mutrec (List.map (rewriters.rewrite_fun rewriters) fdefs)
+  | DEF_module (id, typq, defs) -> DEF_module (id, typq, List.map (rewrite_def rewriters) defs)
+  | DEF_import imp -> DEF_import imp
   | DEF_val letbind -> DEF_val (rewriters.rewrite_let rewriters letbind)
   | DEF_scattered _ -> raise (Reporting.err_unreachable Parse_ast.Unknown __POS__ "DEF_scattered survived to rewritter")
 

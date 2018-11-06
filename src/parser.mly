@@ -67,9 +67,10 @@ let assoc_opt key (assocs, default) =
 
 let cons_fst h (t,x) = (h::t,x)
 
-let string_of_id = function
+let rec string_of_id = function
   | Id_aux (Id str, _) -> str
   | Id_aux (DeIid str, _) -> str
+  | Id_aux (Scope (namespace, id), _) -> namespace ^ "." ^ string_of_id id
 
 let prepend_id str1 = function
   | Id_aux (Id str2, loc) -> Id_aux (Id (str1 ^ str2), loc)
@@ -81,9 +82,10 @@ let mk_kid str n m = Kid_aux (Var str, loc n m)
 let id_of_kid = function
   | Kid_aux (Var v, l) -> Id_aux (Id (String.sub v 1 (String.length v - 1)), l)
 
-let deinfix = function
-  | (Id_aux (Id v, l)) -> Id_aux (DeIid v, l)
-  | (Id_aux (DeIid v, l)) -> Id_aux (Id v, l)
+let rec deinfix = function
+  | Id_aux (Id v, l) -> Id_aux (DeIid v, l)
+  | Id_aux (DeIid v, l) -> Id_aux (Id v, l)
+  | Id_aux (Scope (ns, id), l) -> Id_aux (Scope (ns, deinfix id), l)
 
 let mk_effect e n m = BE_aux (e, loc n m)
 let mk_typ t n m = ATyp_aux (t, loc n m)
@@ -93,6 +95,7 @@ let mk_exp e n m = E_aux (e, loc n m)
 let mk_lit l n m = L_aux (l, loc n m)
 let mk_lit_exp l n m = mk_exp (E_lit (mk_lit l n m)) n m
 let mk_typschm tq t n m = TypSchm_aux (TypSchm_ts (tq, t), loc n m)
+let mk_import im n m = Imp_aux (im, loc n m)
 
 let mk_typschm_opt ts n m = TypSchm_opt_aux (
                                   TypSchm_opt_some (
@@ -175,7 +178,7 @@ let rec desugar_rchain chain s e =
 
 /*Terminals with no content*/
 
-%token And As Assert Bitzero Bitone By Match Clause Dec Default Effect End Op Where
+%token And As Assert Bitzero Bitone By Match Clause Dec Default Effect Op
 %token Enum Else False Forall Foreach Overload Function_ Mapping If_ In Inc Let_ Int Order Cast
 %token Pure Register Return Scattered Sizeof Struct Then True TwoCaret TYPE Typedef
 %token Undefined Union Newtype With Val Constraint Throw Try Catch Exit Bitfield
@@ -191,6 +194,8 @@ let rec desugar_rchain chain s e =
 
 /*Terminals with content*/
 
+%token <string> End
+%token <string> Scope
 %token <string> Id TyVar
 %token <Nat_big_num.num> Num
 %token <string> String Bin Hex Real
@@ -210,6 +215,10 @@ let rec desugar_rchain chain s e =
 
 %token <Parse_ast.fixity_token> Fixity
 
+%token Where
+%token <string> Module EndModule
+%token Import
+
 %start file
 %start typschm_eof
 %start exp_eof
@@ -223,6 +232,10 @@ let rec desugar_rchain chain s e =
 
 id:
   | Id { mk_id (Id $1) $startpos $endpos }
+
+  | Scope id
+    { let ns = String.sub $1 0 (String.length $1 - 2) in
+      mk_id (Scope (ns, $2)) $startpos $endpos }
 
   | Op Op0 { mk_id (DeIid $2) $startpos $endpos }
   | Op Op1 { mk_id (DeIid $2) $startpos $endpos }
@@ -309,8 +322,7 @@ id_list:
     { $1 :: $3 }
 
 kid:
-  | TyVar
-    { mk_kid $1 $startpos $endpos }
+  | TyVar { mk_kid $1 $startpos $endpos }
 
 kid_list:
   | kid
@@ -1353,6 +1365,8 @@ default_def:
     { mk_default (DT_order ($2, mk_typ ATyp_inc $startpos($3) $endpos)) $startpos $endpos }
   | Default base_kind Dec
     { mk_default (DT_order ($2, mk_typ ATyp_dec $startpos($3) $endpos)) $startpos $endpos }
+  | Default base_kind kid
+    { mk_default (DT_order ($2, mk_typ (ATyp_var $3) $startpos($3) $endpos)) $startpos $endpos }
 
 scattered_def:
   | Union id typquant
@@ -1372,6 +1386,29 @@ scattered_clause:
   | Function_ Clause funcl
     { mk_sd (SD_scattered_funcl $3) $startpos $endpos }
 
+mod_bindings:
+  | id Eq id
+    { [($1, $3)] }
+  | id Eq id Comma mod_bindings
+    { ($1, $3) :: $5 }
+
+import_def:
+  | Import typ As Id
+    { mk_import (Imp_mod ($2, [], $4)) $startpos $endpos }
+  | Import typ Lcurly mod_bindings Rcurly As Id
+    { mk_import (Imp_mod ($2, $4, $7)) $startpos $endpos }
+  | Import typ
+    { mk_import (Imp_mod ($2, [], "")) $startpos $endpos }
+  | Import typ Lcurly mod_bindings Rcurly
+    { mk_import (Imp_mod ($2, $4, "")) $startpos $endpos }
+  | Import String As Id
+    { mk_import (Imp_file ($2, [], $4)) $startpos $endpos }
+  | Import String Lcurly mod_bindings Rcurly As Id
+    { mk_import (Imp_file ($2, $4, $7)) $startpos $endpos }
+  | Import String
+    { mk_import (Imp_file ($2, [], "")) $startpos $endpos }
+  | Import String Lcurly mod_bindings Rcurly
+    { mk_import (Imp_file ($2, $4, "")) $startpos $endpos }
 
 def:
   | fun_def
@@ -1400,16 +1437,24 @@ def:
     { DEF_scattered (mk_sd (SD_scattered_unioncl ($3, $5)) $startpos $endpos) }
   | Mapping Clause id Eq mapcl
     { DEF_scattered (mk_sd (SD_scattered_mapcl ($3, $5)) $startpos $endpos) }
-  | End id
-    { DEF_scattered (mk_sd (SD_scattered_end $2) $startpos $endpos) }
+  | End
+    { DEF_scattered (mk_sd (SD_scattered_end (mk_id (Id $1) $startpos $endpos)) $startpos $endpos) }
   | default_def
     { DEF_default $1 }
   | Constraint id Lparen kid_list Rparen Eq nc
     { DEF_constraint ($2, $4, $7) }
+  | Module Where defs_list EndModule
+    { DEF_module (mk_id (Id $1) $startpos $endpos, mk_typqn, $3) }
+  | Module typquant Where defs_list EndModule
+    { DEF_module (mk_id (Id $1) $startpos $endpos, $2, $4) }
+  | Module typquant Lcurly id_list Rcurly Where defs_list EndModule
+    { DEF_module (mk_id (Id $1) $startpos $endpos, $2, $7) }
+  | import_def
+    { DEF_import $1 }
   | Mutual Lcurly fun_def_list Rcurly
     { DEF_internal_mutrec $3 }
   | Pragma
-    { DEF_pragma (fst $1, snd $1, loc $startpos $endpos) }
+    { DEF_pragma (fst $1, snd $1, loc $startpos($1) $endpos($1)) }
 
 defs_list:
   | def

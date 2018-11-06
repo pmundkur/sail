@@ -92,11 +92,6 @@ let rec kind_to_string kind = match kind.k with
 type envs = Nameset.t * kind Envmap.t * order
 type 'a envs_out = 'a * envs
 
-let id_to_string (Id_aux(id,l)) =
-  match id with | Id(x) | DeIid(x) -> x
-
-let var_to_string (Kid_aux(Var v,l)) = v
-
 let typquant_to_quantkinds k_env typquant =
   match typquant with
   | TypQ_aux(tq,_) ->
@@ -110,7 +105,7 @@ let typquant_to_quantkinds k_env typquant =
           | QI_id(ki) -> begin
             match ki with
             | KOpt_aux(KOpt_none(v),l) | KOpt_aux(KOpt_kind(_,v),l) ->
-              (match Envmap.apply k_env (var_to_string v) with
+              (match Envmap.apply k_env (string_of_kid v) with
               | Some(typ) -> typ::rst
               | None -> raise (Reporting.err_unreachable l __POS__ "Envmap didn't get an entry during typschm processing"))
           end)
@@ -122,31 +117,34 @@ let typ_error l msg opt_id opt_var opt_kind =
            l
            (msg ^
               (match opt_id, opt_var, opt_kind with
-              | Some(id),None,Some(kind) -> (id_to_string id) ^ " of " ^ (kind_to_string kind)
-              | Some(id),None,None -> ": " ^ (id_to_string id)
-              | None,Some(v),Some(kind) -> (var_to_string v) ^ " of " ^ (kind_to_string kind)
-              | None,Some(v),None -> ": " ^ (var_to_string v)
+              | Some(id),None,Some(kind) -> (string_of_id id) ^ " of " ^ (kind_to_string kind)
+              | Some(id),None,None -> ": " ^ (string_of_id id)
+              | None,Some(v),Some(kind) -> (string_of_kid v) ^ " of " ^ (kind_to_string kind)
+              | None,Some(v),None -> ": " ^ (string_of_kid v)
               | None,None,Some(kind) -> " " ^ (kind_to_string kind)
               | _ -> "")))
 
-let string_of_parse_id_aux = function
+let rec string_of_parse_id_aux = function
   | Parse_ast.Id v -> v
   | Parse_ast.DeIid v -> v
+  | Parse_ast.Scope (ns, id) -> ns ^ "::" ^ string_of_parse_id id
 
-let string_of_parse_id (Parse_ast.Id_aux(id, l)) = string_of_parse_id_aux id
+and string_of_parse_id (Parse_ast.Id_aux(id, l)) = string_of_parse_id_aux id
 
 let string_contains str char =
   try (ignore (String.index str char); true) with
   | Not_found -> false
 
-let to_ast_id (Parse_ast.Id_aux(id, l)) =
-  if string_contains (string_of_parse_id_aux id) '#' && not (!opt_magic_hash)
-  then typ_error l "Identifier contains hash character" None None None
-  else Id_aux ((match id with
-                | Parse_ast.Id(x) -> Id(x)
-                | Parse_ast.DeIid(x) -> DeIid(x)),
-               l)
-
+let rec to_ast_id (Parse_ast.Id_aux (id, l)) =
+  if string_contains (string_of_parse_id_aux id) '#' && not (!opt_magic_hash) then
+    typ_error l "Identifier contains hash character" None None None
+  else
+    Id_aux ((match id with
+             | Parse_ast.Id str -> Id str
+             | Parse_ast.DeIid str -> DeIid str
+             | Parse_ast.Scope (ns, id) -> Scope (ns, to_ast_id id)),
+            l)
+  
 let to_ast_var (Parse_ast.Kid_aux(Parse_ast.Var v,l)) = Kid_aux(Var v,l)
 
 let to_ast_base_kind (Parse_ast.BK_aux(k,l')) =
@@ -175,7 +173,7 @@ let rec to_ast_typ (k_env : kind Envmap.t) (def_ord : order) (t: Parse_ast.atyp)
                | Parse_ast.ATyp_id(id) -> Typ_id (to_ast_id id)
                | Parse_ast.ATyp_var(v) ->
                   let v = to_ast_var v in
-                  let mk = Envmap.apply k_env (var_to_string v) in
+                  let mk = Envmap.apply k_env (string_of_kid v) in
                   (match mk with
                    | Some(k) -> (match k.k with
                                  | K_Typ -> Typ_var v
@@ -237,7 +235,7 @@ let rec to_ast_typ (k_env : kind Envmap.t) (def_ord : order) (t: Parse_ast.atyp)
                  Typ_app(Id_aux(Id "atom", il), [Typ_arg_aux (Typ_arg_nexp (to_ast_nexp k_env n), Parse_ast.Unknown)])
               | Parse_ast.ATyp_app(pid,typs) ->
                   let id = to_ast_id pid in
-                  let k = Envmap.apply k_env (id_to_string id) in
+                  let k = Envmap.apply k_env (string_of_id id) in
                   (match k with
                    | Some({k = K_Lam(args,t)}) ->
                       if ((List.length args) = (List.length typs))
@@ -248,7 +246,7 @@ let rec to_ast_typ (k_env : kind Envmap.t) (def_ord : order) (t: Parse_ast.atyp)
                    | _ -> typ_error l "Required a type constructor, encountered a base kind variable" (Some id) None None)
                | Parse_ast.ATyp_exist (kids, nc, atyp) ->
                   let kids = List.map to_ast_var kids in
-                  let k_env = List.fold_left Envmap.insert k_env (List.map (fun kid -> (var_to_string kid, {k=K_Nat})) kids) in
+                  let k_env = List.fold_left Envmap.insert k_env (List.map (fun kid -> (string_of_kid kid, {k=K_Nat})) kids) in
                   let exist_typ = to_ast_typ k_env def_ord atyp in
                   Typ_exist (kids, to_ast_nexp_constraint k_env nc, exist_typ)
                | _ -> typ_error l "Required an item of kind Type, encountered an illegal form for this kind" None None None
@@ -286,7 +284,7 @@ and to_ast_order (k_env : kind Envmap.t) (def_ord : order) (o: Parse_ast.atyp) :
     (match t with
       | Parse_ast.ATyp_var(v) ->
         let v = to_ast_var v in
-        let mk = Envmap.apply k_env (var_to_string v) in
+        let mk = Envmap.apply k_env (string_of_kid v) in
         (match mk with
           | Some(k) -> (match k.k with
               | K_Ord -> Ord_aux(Ord_var v, l)
@@ -305,7 +303,7 @@ and to_ast_effects (k_env : kind Envmap.t) (e : Parse_ast.atyp) : Ast.effect =
     Effect_aux( (match t with
                | Parse_ast.ATyp_var(v) ->
                 let v = to_ast_var v in
-                let mk = Envmap.apply k_env (var_to_string v) in
+                let mk = Envmap.apply k_env (string_of_kid v) in
                 (match mk with
                 | Some k -> typ_error l "Required a variable with kind Effect, encountered " None (Some v) (Some k)
                 | None -> typ_error l "Encountered an unbound variable" None (Some v) None)
@@ -384,12 +382,12 @@ let to_ast_typquant (k_env: kind Envmap.t) (tq : Parse_ast.typquant) : typquant 
       match ki with
       | Parse_ast.KOpt_none(v) ->
 	let v = to_ast_var v in
-	let key = var_to_string v in
+	let key = string_of_kid v in
 	let kind,ktyp = if (Envmap.in_dom key k_env) then None,(Envmap.apply k_env key) else None,(Some{ k = K_infer }) in
 	v,key,kind, ktyp
       | Parse_ast.KOpt_kind(k,v) ->
 	let v = to_ast_var v in
-	let key = var_to_string v in
+	let key = string_of_kid v in
 	let kind,ktyp = to_ast_kind k_env k in
 	v,key,Some(kind),Some(ktyp)
     in
@@ -646,6 +644,9 @@ let to_ast_default (names, k_env, default_order) (default : Parse_ast.default_ty
       | (BK_aux(BK_order, _), Parse_ast.ATyp_aux(Parse_ast.ATyp_dec,lo)) ->
          let default_order = Ord_aux(Ord_dec,lo) in
          DT_aux(DT_order default_order,l),(names,k_env,default_order)
+      | (BK_aux(BK_order, _), Parse_ast.ATyp_aux(Parse_ast.ATyp_var kid,lo)) ->
+         let default_order = Ord_aux(Ord_var (to_ast_var kid),lo) in
+         DT_aux(DT_order default_order,l),(names,k_env,default_order)
       | _ -> typ_error l "Inc and Dec must have kind Order" None None None)
 
 let to_ast_spec (names,k_env,default_order) (val_:Parse_ast.val_spec) : (unit val_spec) envs_out =
@@ -681,7 +682,7 @@ let to_ast_typedef (names,k_env,def_ord) (td:Parse_ast.type_def) : (unit type_de
   (match td with
   | Parse_ast.TD_abbrev(id,name_scm_opt,typschm) ->
     let id = to_ast_id id in
-    let key = id_to_string id in
+    let key = string_of_id id in
     let typschm,k_env,_ = to_ast_typschm k_env def_ord typschm in
     let td_abrv = TD_aux(TD_abbrev(id,to_ast_namescm name_scm_opt,typschm),(l,())) in
     let typ = (match typschm with
@@ -693,7 +694,7 @@ let to_ast_typedef (names,k_env,def_ord) (td:Parse_ast.type_def) : (unit type_de
     td_abrv,(names,Envmap.insert k_env (key,typ),def_ord)
   | Parse_ast.TD_record(id,name_scm_opt,typq,fields,_) ->
     let id = to_ast_id id in
-    let key = id_to_string id in
+    let key = string_of_id id in
     let typq,k_env,_ = to_ast_typquant k_env typq in
     let fields = List.map (fun (atyp,id) -> (to_ast_typ k_env def_ord atyp),(to_ast_id id)) fields in (* Add check that all arms have unique names locally *)
     let td_rec = TD_aux(TD_record(id,to_ast_namescm name_scm_opt,typq,fields,false),(l,())) in
@@ -703,7 +704,7 @@ let to_ast_typedef (names,k_env,def_ord) (td:Parse_ast.type_def) : (unit type_de
     td_rec, (names,Envmap.insert k_env (key,typ), def_ord)
   | Parse_ast.TD_variant(id,name_scm_opt,typq,arms,_) ->
     let id = to_ast_id id in
-    let key = id_to_string id in
+    let key = string_of_id id in
     let typq,k_env,_ = to_ast_typquant k_env typq in
     let arms = List.map (to_ast_type_union k_env def_ord) arms in (* Add check that all arms have unique names *)
     let td_var = TD_aux(TD_variant(id,to_ast_namescm name_scm_opt,typq,arms,false),(l,())) in
@@ -713,15 +714,15 @@ let to_ast_typedef (names,k_env,def_ord) (td:Parse_ast.type_def) : (unit type_de
     td_var, (names,Envmap.insert k_env (key,typ), def_ord)
   | Parse_ast.TD_enum(id,name_scm_opt,enums,_) ->
     let id = to_ast_id id in
-    let key = id_to_string id in
+    let key = string_of_id id in
     let enums = List.map to_ast_id enums in
-    let keys = List.map id_to_string enums in
+    let keys = List.map string_of_id enums in
     let td_enum = TD_aux(TD_enum(id,to_ast_namescm name_scm_opt,enums,false),(l,())) in (* Add check that all enums have unique names *)
     let k_env = List.fold_right (fun k k_env -> Envmap.insert k_env (k,{k=K_Nat})) keys (Envmap.insert k_env (key,{k=K_Typ})) in
     td_enum, (names,k_env,def_ord)
   | Parse_ast.TD_bitfield(id,typ,ranges) ->
     let id = to_ast_id id in
-    let key = id_to_string id in
+    let key = string_of_id id in
     let typ = to_ast_typ k_env def_ord typ in
     let ranges = List.map (fun (id, range) -> (to_ast_id id, to_ast_range range)) ranges in
     TD_aux(TD_bitfield(id,typ,ranges),(l,())), (names,Envmap.insert k_env (key, {k=K_Typ}),def_ord))
@@ -732,7 +733,7 @@ let to_ast_kdef (names,k_env,def_ord) (td:Parse_ast.kind_def) : (unit kind_def) 
   (match td with
   | Parse_ast.KD_abbrev(kind,id,name_scm_opt,typschm) ->
     let id = to_ast_id id in
-    let key = id_to_string id in
+    let key = string_of_id id in
     let (kind,k) = to_ast_kind k_env kind in
     (match k.k with
      | K_Nat ->
@@ -879,7 +880,7 @@ let to_ast_prec = function
   | Parse_ast.InfixL -> InfixL
   | Parse_ast.InfixR -> InfixR
 
-let to_ast_def (names, k_env, def_ord) partial_defs def : def_progress envs_out * (id * partial_def) list =
+let rec to_ast_def (names, k_env, def_ord) partial_defs def : def_progress envs_out * (id * partial_def) list =
   let envs = (names,k_env,def_ord) in
   match def with
   | Parse_ast.DEF_overload(id,ids) ->
@@ -915,6 +916,35 @@ let to_ast_def (names, k_env, def_ord) partial_defs def : def_progress envs_out 
      let kids = List.map to_ast_var kids in
      let nc = to_ast_nexp_constraint k_env nc in
      ((Finished (DEF_constraint (id, kids, nc))), envs), partial_defs
+  | Parse_ast.DEF_module (id, typq, defs) ->
+     let typq, k_env', _ = to_ast_typquant k_env typq in
+     let defs, _, _ = to_ast_defs names k_env' def_ord defs in
+     let kind = match typquant_to_quantkinds k_env' typq with
+       | [] -> {k = K_Typ}
+       | kinds -> {k = K_Lam (kinds, {k = K_Typ})}
+     in
+     let k_env = Envmap.insert k_env (string_of_id (to_ast_id id), kind) in
+     (Finished (DEF_module (to_ast_id id, typq, defs)), (names, k_env, def_ord)), partial_defs
+  | Parse_ast.DEF_import (Parse_ast.Imp_aux (Parse_ast.Imp_mod (atyp, links, as_name), imp_l)) ->
+     let id, args = match atyp with
+       | Parse_ast.ATyp_aux (Parse_ast.ATyp_app (id, args), l) ->
+          let id = to_ast_id id in
+          let kinds = match Envmap.apply k_env (string_of_id id) with
+            | Some({k = K_Lam(kinds, _)}) -> kinds
+            | _ -> typ_error l ("Invalid module import " ^ string_of_id id) None None None
+          in
+          id, List.map2 (fun a k -> to_ast_typ_arg k_env def_ord k a) args kinds
+       | Parse_ast.ATyp_aux (Parse_ast.ATyp_id id, l) ->
+          to_ast_id id, []
+       | Parse_ast.ATyp_aux (_, l) -> typ_error l "Invalid module declaration" None None None
+     in
+     let links = List.map (fun (id, id') -> to_ast_id id, to_ast_id id') links in
+     (Finished (DEF_import (Imp_aux (Imp_mod (id, args, links, as_name), (imp_l, ())))), envs),
+     partial_defs
+  | Parse_ast.DEF_import (Parse_ast.Imp_aux (Parse_ast.Imp_file (file, links, as_name), imp_l)) ->
+     let links = List.map (fun (id, id') -> to_ast_id id, to_ast_id id') links in
+     (Finished (DEF_import (Imp_aux (Imp_file (file, links, as_name), (imp_l, ())))), envs),
+     partial_defs
   | Parse_ast.DEF_pragma (_, _, l) ->
      typ_error l "Encountered preprocessor directive in initial check" None None None
   | Parse_ast.DEF_internal_mutrec _ ->
@@ -978,7 +1008,7 @@ let to_ast_def (names, k_env, def_ord) partial_defs def : def_progress envs_out 
                      | typs -> {k = K_Lam(typs,{k=K_Typ})}) in
          (match (def_in_progress id partial_defs) with
           | None -> let partial_def = ref ((DEF_type(TD_aux(TD_variant(id,name,typq,[],false),(l,())))),false) in
-                    (Def_place_holder(id,l),(names,Envmap.insert k_env ((id_to_string id),kind),def_ord)),(id,(partial_def,k_env'))::partial_defs
+                    (Def_place_holder(id,l),(names,Envmap.insert k_env ((string_of_id id),kind),def_ord)),(id,(partial_def,k_env'))::partial_defs
           | Some(d,k) -> typ_error l "Scattered type definition header name already in use by scattered definition" (Some id) None None)
       | Parse_ast.SD_scattered_unioncl(id,tu) ->
          let id = to_ast_id id in
@@ -1010,7 +1040,7 @@ let to_ast_def (names, k_env, def_ord) partial_defs def : def_progress envs_out 
                  typ_error l "Scattered definition ended multiple times" (Some id) None None
               | _ -> raise (Reporting.err_unreachable l __POS__ "Something in partial_defs other than fundef and type"))))
 
-let rec to_ast_defs_helper envs partial_defs = function
+and to_ast_defs_helper envs partial_defs = function
   | [] -> ([],envs,partial_defs)
   | d::ds  -> let ((d', envs), partial_defs) = to_ast_def envs partial_defs d in
               let (defs,envs,partial_defs) = to_ast_defs_helper envs partial_defs ds in
@@ -1027,14 +1057,14 @@ let rec to_ast_defs_helper envs partial_defs = function
                    then (fst !d) :: defs, envs, partial_defs
                    else typ_error l "Scattered type definition never ended" (Some id) None None))
 
-let rec remove_mutrec = function
+and remove_mutrec = function
   | [] -> []
   | Parse_ast.DEF_internal_mutrec fundefs :: defs ->
      List.map (fun fdef -> Parse_ast.DEF_fundef fdef) fundefs @ remove_mutrec defs
   | def :: defs ->
      def :: remove_mutrec defs
 
-let to_ast (default_names : Nameset.t) (kind_env : kind Envmap.t) (def_ord : order) (Parse_ast.Defs(defs)) =
+and to_ast_defs (default_names : Nameset.t) (kind_env : kind Envmap.t) (def_ord : order) defs =
   let defs = remove_mutrec defs in
   let defs,(_,k_env,def_ord),partial_defs = to_ast_defs_helper (default_names,kind_env,def_ord) [] defs in
   List.iter
@@ -1043,8 +1073,12 @@ let to_ast (default_names : Nameset.t) (kind_env : kind Envmap.t) (def_ord : ord
       | (d,false) -> typ_error Parse_ast.Unknown "Scattered definition never ended" (Some id) None None
       | (_, true) -> ()))
     partial_defs;
-  (Defs defs),k_env,def_ord
+  defs,k_env,def_ord
 
+and to_ast default_names k_env def_ord (Parse_ast.Defs defs) =
+  let defs, k_env, def_ord = to_ast_defs default_names k_env def_ord defs in
+  Defs defs, k_env, def_ord
+  
 let initial_kind_env =
   Envmap.from_list [
     ("bool", {k = K_Typ});

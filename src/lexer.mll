@@ -119,7 +119,6 @@ let kw_table =
      ("operator",                (fun _ -> Op));
      ("default",		 (fun _ -> Default));
      ("effect",                  (fun _ -> Effect));
-     ("end",                     (fun _ -> End));
      ("enum",		         (fun _ -> Enum));
      ("else",                    (fun _ -> Else));
      ("exit",                    (fun _ -> Exit));
@@ -181,9 +180,12 @@ let kw_table =
      ("nondet",                  (fun x -> Nondet));
      ("escape",                  (fun x -> Escape));
      ("configuration",           (fun _ -> Configuration));
+
+     ("where",                   (fun _ -> Where));
+     ("import",                  (fun _ -> Import));
    ]
 
-
+let modules = ref []
 
 }
 
@@ -195,9 +197,10 @@ let hexdigit = ['0'-'9''A'-'F''a'-'f''_']
 let alphanum = letter|digit
 let startident = letter|'_'
 let ident = alphanum|['_''\'''#']
+let scope = (alphanum|['_'])+ ':'':'
 let tyvar_start = '\''
 (* Ensure an operator cannot start with comment openings *)
-let oper_char = ['!''%''&''*''+''-''.''/'':''<''=''>''@''^''|']
+let oper_char = ['!''%''&''*''+''-''/'':''<''=''>''@''^''|']
 let oper_char_no_slash = ['!''%''&''*''+''-''.'':''<''=''>''@''^''|']
 let oper_char_no_slash_star = ['!''%''&''+''-''.'':''<''=''>''@''^''|']
 let operator1 = oper_char
@@ -223,7 +226,6 @@ rule token = parse
   | ":"                                 { Colon(r ":") }
   | ","                                 { Comma }
   | ".."                                { DotDot }
-  | "."                                 { Dot }
   | "==" as op
     { try M.find op !operators
       with Not_found -> raise (LexError ("Operator fixity undeclared " ^ op, Lexing.lexeme_start_p lexbuf)) }
@@ -272,15 +274,18 @@ rule token = parse
   | operator as op
     { try M.find op !operators
       with Not_found -> raise (LexError ("Operator fixity undeclared " ^ op, Lexing.lexeme_start_p lexbuf)) }
-  | tyvar_start startident ident* as i  { TyVar(r i) }
-  | "~"                                 { Id(r"~") }
-  | startident ident* as i              { if M.mem i kw_table then
-                                            (M.find i kw_table) ()
-					  (* else if
-                                            List.mem i default_type_names ||
-                                            List.mem i !custom_type_names then
-					    TyId(r i) *)
-					  else Id(r i) }
+  | tyvar_start startident ident* as i    { TyVar(r i) }
+  | "~"                                   { Id(r"~") }
+  | scope as s                            { Scope s }
+  | "module" ws (startident ident* as i)  { modules := i :: !modules; Module i }
+  | "end" ws (startident ident* as i)     { match !modules with
+                                            | mdl :: mdls when String.compare mdl i = 0 ->
+					       (modules := mdls; EndModule i)
+					    | _ -> End i }
+  | startident ident* as i                { if M.mem i kw_table then
+                                              (M.find i kw_table) ()
+					    else Id(r i) }
+  | "."                                   { Dot }
   | (digit+ as i1) "." (digit+ as i2)     { (Real (i1 ^ "." ^ i2)) }
   | "-" (digit* as i1) "." (digit+ as i2) { (Real ("-" ^ i1 ^ "." ^ i2)) }
   | digit+ as i                           { (Num(Big_int.of_string i)) }

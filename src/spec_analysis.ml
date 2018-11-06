@@ -468,7 +468,7 @@ let fv_of_rd consider_var (DEC_aux (d, annot)) =
   | DEC_typ_alias(t, id, alias) ->
      init_env (string_of_id id), mt
 
-let fv_of_def consider_var consider_scatter_as_one all_defs = function
+let rec fv_of_def consider_var consider_scatter_as_one all_defs = function
   | DEF_kind kdef -> fv_of_kind_def consider_var kdef
   | DEF_type tdef -> fv_of_type_def consider_var tdef
   | DEF_fundef fdef -> fv_of_fun consider_var fdef
@@ -484,6 +484,11 @@ let fv_of_def consider_var consider_scatter_as_one all_defs = function
      let fvs = List.map (fv_of_fun consider_var) fdefs in
      List.fold_left Nameset.union Nameset.empty (List.map fst fvs),
      List.fold_left Nameset.union Nameset.empty (List.map snd fvs)
+  | DEF_module (_, _, defs) ->
+     let fvs = List.map (fv_of_def consider_var consider_scatter_as_one all_defs) defs in
+     List.fold_left Nameset.union Nameset.empty (List.map fst fvs),
+     List.fold_left Nameset.union Nameset.empty (List.map snd fvs)
+  | DEF_import _ -> mt, mt
   | DEF_scattered sdef -> fv_of_scattered consider_var consider_scatter_as_one all_defs sdef
   | DEF_reg_dec rdec -> fv_of_rd consider_var rdec
   | DEF_constraint (id, _, _) ->
