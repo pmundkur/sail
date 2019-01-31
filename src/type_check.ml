@@ -4395,13 +4395,22 @@ let rec check_typedef : 'a. Env.t -> 'a type_def -> (tannot def) list * Env.t =
      begin
        match typ with
        (* The type of a bitfield must be a constant-width bitvector *)
-       | Typ_aux (Typ_app (v, [A_aux (A_nexp (Nexp_aux (Nexp_constant size, _)), _);
+       | Typ_aux (Typ_app (v, [A_aux (A_nexp (Nexp_aux (nexp, _)), _);
                                A_aux (A_order order, _);
                                A_aux (A_typ (Typ_aux (Typ_id b, _)), _)]), _)
             when string_of_id v = "vector" && string_of_id b = "bit" ->
-          let size = Big_int.to_int size in
-          let (Defs defs), env = check env (Bitfield.macro id size order ranges) in
-          defs, env
+             let size =
+               (match nexp with
+                | Nexp_constant size -> size
+                | Nexp_id id ->
+                   (match Env.lookup_id id env with
+                    | Local (Immutable,Typ_aux(Typ_app(a,[A_aux(A_nexp(Nexp_aux(Nexp_constant size,_)),_)]),_))
+                         when string_of_id a = "atom" -> size
+                    | _ -> typ_error l "Bad bitvector size")
+               ) in
+             let size = Big_int.to_int size in
+             let (Defs defs), env = check env (Bitfield.macro id size order ranges) in
+             defs, env
        | _ ->
           typ_error l "Bad bitfield type"
      end
