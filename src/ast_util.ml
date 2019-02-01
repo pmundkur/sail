@@ -236,6 +236,11 @@ let rec is_nexp_constant (Nexp_aux (nexp, _)) = match nexp with
   | Nexp_exp n | Nexp_neg n -> is_nexp_constant n
   | Nexp_app (_, nexps) -> List.for_all is_nexp_constant nexps
 
+let int_of_nexp_opt nexp =
+  match nexp with
+  | Nexp_aux(Nexp_constant i,_) -> Some i
+  | _ -> None
+
 let rec nexp_simp (Nexp_aux (nexp, l)) = Nexp_aux (nexp_simp_aux nexp, l)
 and nexp_simp_aux = function
   (* (n - (n - m)) often appears in foreach loops *)
@@ -895,8 +900,8 @@ and string_of_letbind (LB_aux (lb, l)) =
 
 let rec string_of_index_range (BF_aux (ir, _)) =
   match ir with
-  | BF_single n -> Big_int.to_string n
-  | BF_range (n, m) -> Big_int.to_string n ^ " .. " ^ Big_int.to_string m
+  | BF_single n -> string_of_nexp n
+  | BF_range (n, m) -> string_of_nexp n ^ " .. " ^ string_of_nexp m
   | BF_concat (ir1, ir2) -> "(" ^ string_of_index_range ir1 ^ ") : (" ^ string_of_index_range ir2 ^ ")"
 
 
@@ -1642,6 +1647,20 @@ and nexp_subst_aux sv subst = function
   | Nexp_app (id, nexps) -> Nexp_app (id, List.map (nexp_subst sv subst) nexps)
   | Nexp_exp nexp -> Nexp_exp (nexp_subst sv subst nexp)
   | Nexp_neg nexp -> Nexp_neg (nexp_subst sv subst nexp)
+
+let rec nexp_subst_id env (Nexp_aux (nexp, l)) = Nexp_aux (nexp_subst_id_aux env nexp, l)
+and nexp_subst_id_aux env = function
+  | (Nexp_id id) as n -> (match env id with None -> n | Some v -> Nexp_constant v)
+  | Nexp_times (nexp1, nexp2) -> Nexp_times (nexp_subst_id env nexp1, nexp_subst_id env nexp2)
+  | Nexp_sum (nexp1, nexp2) -> Nexp_sum (nexp_subst_id env nexp1, nexp_subst_id env nexp2)
+  | Nexp_minus (nexp1, nexp2) -> Nexp_minus (nexp_subst_id env nexp1, nexp_subst_id env nexp2)
+  | Nexp_exp nexp -> Nexp_exp (nexp_subst_id env nexp)
+  | Nexp_neg nexp -> Nexp_neg (nexp_subst_id env nexp)
+  | Nexp_app (id, nexps) ->
+        (* fixme: should be an error if id is present in env *)
+        Nexp_app (id, List.map (nexp_subst_id env) nexps)
+  | (Nexp_var _) as n -> n
+  | (Nexp_constant _) as n -> n
 
 let rec nexp_set_to_or l subst = function
   | [] -> raise (Reporting.err_unreachable l __POS__ "Empty set in constraint")

@@ -1124,9 +1124,9 @@ funcl_typ:
     { mk_tannot mk_typqn $1 $startpos $endpos }
 
 index_range:
-  | Num
+  | typ
     { mk_ir (BF_single $1) $startpos $endpos }
-  | Num DotDot Num
+  | typ DotDot typ
     { mk_ir (BF_range ($1, $3)) $startpos $endpos }
 
 r_id_def:

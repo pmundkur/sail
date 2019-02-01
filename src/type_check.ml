@@ -4373,6 +4373,12 @@ let check_kinddef env (KD_aux (kdef, (l, _))) =
      Env.add_num_def id nexp env
   | _ -> kd_err ()
 
+let mk_lookup_id_as_const env = fun id ->
+  match Env.lookup_id id env with
+  | Local (Immutable,Typ_aux(Typ_app(a,[A_aux(A_nexp(Nexp_aux(Nexp_constant size,_)),_)]),_))
+       when string_of_id a = "atom" -> Some size
+  | _ -> None
+
 let rec check_typedef : 'a. Env.t -> 'a type_def -> (tannot def) list * Env.t =
   fun env (TD_aux (tdef, (l, _))) ->
   let td_err () = raise (Reporting.err_unreachable Parse_ast.Unknown __POS__ "Unimplemented Typedef") in
@@ -4399,18 +4405,15 @@ let rec check_typedef : 'a. Env.t -> 'a type_def -> (tannot def) list * Env.t =
                                A_aux (A_order order, _);
                                A_aux (A_typ (Typ_aux (Typ_id b, _)), _)]), _)
             when string_of_id v = "vector" && string_of_id b = "bit" ->
-             let size =
-               (match nexp with
-                | Nexp_constant size -> size
-                | Nexp_id id ->
-                   (match Env.lookup_id id env with
-                    | Local (Immutable,Typ_aux(Typ_app(a,[A_aux(A_nexp(Nexp_aux(Nexp_constant size,_)),_)]),_))
-                         when string_of_id a = "atom" -> size
-                    | _ -> typ_error l "Bad bitvector size")
-               ) in
-             let size = Big_int.to_int size in
-             let (Defs defs), env = check env (Bitfield.macro id size order ranges) in
-             defs, env
+          let lookup = mk_lookup_id_as_const env in
+          let size = match nexp with
+              | Nexp_constant size -> size
+              | Nexp_id id -> (match lookup id with
+                               | Some v -> v
+                               | None -> typ_error l "Bad bitvector size") in
+          let size = Big_int.to_int size in
+          let (Defs defs), env = check env (Bitfield.macro id size order ranges (lookup, typ_error)) in
+          defs, env
        | _ ->
           typ_error l "Bad bitfield type"
      end

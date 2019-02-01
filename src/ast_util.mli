@@ -330,6 +330,7 @@ end
 val nexp_frees : nexp -> KidSet.t
 val nexp_identical : nexp -> nexp -> bool
 val is_nexp_constant : nexp -> bool
+val int_of_nexp_opt : nexp -> Big_int.num option
 
 val lexp_to_exp : 'a lexp -> 'a exp
 
@@ -415,6 +416,7 @@ val unique : l -> l
    type X. The type of the type argument determines which kind of type
    variables willb e replaced *)
 val nexp_subst : kid -> typ_arg -> nexp -> nexp
+val nexp_subst_id : (id -> Big_int.num option) -> nexp -> nexp
 val constraint_subst : kid -> typ_arg -> n_constraint -> n_constraint
 val order_subst : kid -> typ_arg -> order -> order
 val typ_subst : kid -> typ_arg -> typ -> typ
