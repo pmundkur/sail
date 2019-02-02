@@ -236,6 +236,18 @@ let rec is_nexp_constant (Nexp_aux (nexp, _)) = match nexp with
   | Nexp_exp n | Nexp_neg n -> is_nexp_constant n
   | Nexp_app (_, nexps) -> List.for_all is_nexp_constant nexps
 
+let rec big_int_of_nexp (Nexp_aux (nexp, _)) = match nexp with
+  | Nexp_constant c -> Some c
+  | Nexp_times (n1, n2) ->
+     Util.option_binop Big_int.add (big_int_of_nexp n1) (big_int_of_nexp n2)
+  | Nexp_sum (n1, n2) ->
+     Util.option_binop Big_int.add (big_int_of_nexp n1) (big_int_of_nexp n2)
+  | Nexp_minus (n1, n2) ->
+     Util.option_binop Big_int.add (big_int_of_nexp n1) (big_int_of_nexp n2)
+  | Nexp_exp n ->
+     Util.option_map (fun n -> Big_int.pow_int_positive 2 (Big_int.to_int n)) (big_int_of_nexp n)
+  | _ -> None
+
 let int_of_nexp_opt nexp =
   match nexp with
   | Nexp_aux(Nexp_constant i,_) -> Some i

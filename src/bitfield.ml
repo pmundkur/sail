@@ -155,7 +155,7 @@ let index_range_accessor name field order (env, error_fn) (BF_aux (bf_aux, l)) =
   let setter n m = index_range_setter name field order (Big_int.to_int n) (Big_int.to_int m) in
   let update n m = index_range_update name field order (Big_int.to_int n) (Big_int.to_int m) in
   let overload = index_range_overload name field order in
-  let const_fold nexp = match int_of_nexp_opt (nexp_simp (nexp_subst_id env nexp)) with
+  let const_fold nexp = match big_int_of_nexp (nexp_simp (nexp_subst_id env nexp)) with
       | Some v -> v
       | None -> error_fn l (Printf.sprintf "Non-constant index for field %s" field) in
   match bf_aux with

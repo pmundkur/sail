@@ -1382,7 +1382,7 @@ let is_field_accessor regtypes fdef =
   | _ -> false
 
 let int_of_field_index tname fid nexp =
-  match int_of_nexp_opt nexp with
+  match big_int_of_nexp nexp with
   | Some i -> i
   | None -> raise (Reporting.err_typ Parse_ast.Unknown
                    ("Non-constant bitfield index in field " ^ string_of_id fid ^ " of " ^ tname))
